@@ -1,0 +1,19 @@
+**/*.o
+**/*.a
+**/*~
+**/#*#
+rtv1
+Rt
+Rt_server
+Rt_client
+Rt_Server
+Rt_Client
+**/*.mk
+
+
+#Added by cargo
+#
+#already existing elements are commented out
+
+/target
+**/*.rs.bk
