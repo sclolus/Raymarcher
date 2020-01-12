@@ -70,7 +70,7 @@ struct Vertex {
 	normal: VertexNormal,
 }
 
-const STEP: f32 = 0.05;
+const STEP: f32 = 0.5;
 fn main() {
 	let window_size = WindowDim::Windowed(1080, 720);
 	let window_opt = WindowOpt::default().set_cursor_mode(CursorMode::Visible).set_num_samples(None);
@@ -99,7 +99,7 @@ fn main() {
 	// 	},
 	// ];
 
-	let vertices_file = fs::read_to_string("monkey.obj").expect("Failed to read vertices file");
+	let vertices_file = fs::read_to_string("./ressources/m4a1.obj").expect("Failed to read vertices file");
 	
 	let obj_set = obj::parse(vertices_file).or_else(|parse_error| {
 		println!("Failed to parse .obj file({}): {}", parse_error.line_number, parse_error.message);
@@ -107,9 +107,26 @@ fn main() {
 	}).unwrap();
 
 	let object_to_vertices = |object: &obj::Object| {
-		let wavefront_vertex_to_vertex = |object: &obj::Object, indices: obj::VTNIndex| {
-			let vertex = object.vertices[indices.0];
-			let normal = object.normals[indices.2.unwrap()];
+		let wavefront_vertex_to_vertex = |object: &obj::Object, indices: (obj::VTNIndex, obj::VTNIndex, obj::VTNIndex)| {
+			let vertex = object.vertices[(indices.0).0];
+			let v2 = object.vertices[(indices.1).0];
+			let v3 = object.vertices[(indices.2).0];
+			let mv = |v: obj::Vertex| Vector3::new(v.x, v.y, v.z);
+			
+			let normal;
+			if let Some(ni) = (indices.0).2 {
+				normal = object.normals[ni];
+			} else {
+				let u = mv(v2) - mv(vertex);
+				let v = mv(v3) - mv(vertex);
+
+				let n = -u.cross(v);
+				normal = obj::Vertex {
+					x: n.x,
+					y: n.y,
+					z: n.z,
+				};
+			}
 
 			Vertex {
 				position: VertexPosition::new([vertex.x as f32, vertex.y as f32, vertex.z as f32]),
@@ -123,9 +140,9 @@ fn main() {
 			.map(|shape| {
 				match shape.primitive {
 					obj::Primitive::Triangle(v0, v1, v2) => {
-						[wavefront_vertex_to_vertex(object, v0),
-						 wavefront_vertex_to_vertex(object, v1),
-						 wavefront_vertex_to_vertex(object, v2)]
+						[wavefront_vertex_to_vertex(object, (v0, v1, v2)),
+						 wavefront_vertex_to_vertex(object, (v1, v0, v2)),
+						 wavefront_vertex_to_vertex(object, (v2, v1, v0))]
 					},
 					_ => panic!("{:?} shape is not supported"),
 				}
@@ -134,7 +151,7 @@ fn main() {
 
 
 	
-	let object_vertices = object_to_vertices(&obj_set.objects[0]);
+	let object_vertices = object_to_vertices(&obj_set.objects[1]);
 	println!("Model has {} triangles", object_vertices.len());
 
 	let object_tesses = object_vertices.into_iter()
