@@ -9,6 +9,9 @@ extern crate luminance_derive;
 
 extern crate wavefront_obj;
 extern crate cgmath;
+extern crate fps_counter;
+#[macro_use]
+extern crate clap;
 
 use cgmath::prelude::*;
 use cgmath::{Matrix4, Point3, Vector3, PerspectiveFov};
@@ -36,6 +39,8 @@ use luminance::{
 use wavefront_obj::obj;
 use wavefront_obj::ParseError;
 use std::fs;
+
+mod cli;
 
 const WINDOW_NAME: &str = "Raymarcher";
 const VERTEX_SHADER_SOURCE: &str = include_str!("vs.glsl");
@@ -71,14 +76,20 @@ struct Vertex {
 }
 
 const STEP: f32 = 0.5;
+
 fn main() {
-	let vertices_filename = match std::env::args().nth(1) {
-		Some(filename) => filename,
-		None => {
-			eprintln!("No input .obj file was provided");
-			std::process::exit(1);
-		},
-	};
+	
+	let matches = clap_app! {
+		raymarcher =>
+			(version: "omega-0.1")
+			(author: "Sebastien `sclolus` CLOLUS <sclolus@student.42.fr>")
+			(about: "A simple rust rasterizer/raymarcher (Not sure yet)")
+			(bin_name: "Raymarcher")
+			(after_help: "A simple raymarcher.")
+			(@arg object_files: -f --obj-file +required +takes_value ... "An wavefront .obj object file's name to render")
+	}.get_matches();
+
+	let object_files = matches.values_of("object_files").expect("Should have object_files");
 	let window_size = WindowDim::Windowed(1080, 720);
 	let window_opt = WindowOpt::default().set_cursor_mode(CursorMode::Visible).set_num_samples(Some(4));
 
@@ -91,12 +102,14 @@ fn main() {
 	
 	let shader: Program<VertexSemantics, (), FragmentShaderUniform> = Program::from_stages(tess, &vertex, geometry, &fragment).unwrap().ignore_warnings();
 
-	let vertices_file = fs::read_to_string(vertices_filename).expect("Failed to read vertices file");
+	let object_files = object_files
+		.flat_map(|f: &str| fs::read_to_string(f).map_err(|_| panic!("Could not read {} object file", f)))
+		.collect::<Vec<String>>();
 	
-	let obj_set = obj::parse(vertices_file).or_else(|parse_error| {
+	let obj_sets = object_files.iter().map(|file| obj::parse(file).or_else(|parse_error| {
 		println!("Failed to parse .obj file({}): {}", parse_error.line_number, parse_error.message);
 		Err(parse_error)
-	}).unwrap();
+	}).unwrap()).collect::<Vec<obj::ObjSet>>();
 
 	let object_to_vertices = |object: &obj::Object| {
 		let wavefront_vertex_to_vertex = |object: &obj::Object, indices: (obj::VTNIndex, obj::VTNIndex, obj::VTNIndex)| {
@@ -141,15 +154,13 @@ fn main() {
 			}).collect::<Vec<[Vertex; 3]>>()
 	};
 
-
 	
 	let mut object_vertices = Vec::new();
-	for object in obj_set.objects.iter() {
+	for object in obj_sets.iter().flat_map(|set| set.objects.iter()) {
 		let new_vertices = object_to_vertices(object);
 		println!("New model: {} has {} triangles", object.name, object_vertices.len());
 		object_vertices.extend(new_vertices);
 	}
-
 
 	let object_tesses = object_vertices.into_iter()
 		.map(|vertices|
@@ -175,9 +186,11 @@ fn main() {
 		(view_matrix, projection_matrix)
 	};
 	let (mut view_matrix, mut projection_matrix) = make_camera_matrices(eye_pos, dir, up_dir, aspect);
+	let mut fps_counter = fps_counter::FPSCounter::new();
 	let start = Instant::now();
-
+	println!("Rendering start");
 	'app: loop {
+		
 		for event in surface.poll_events() {
 			if let WindowEvent::Close | WindowEvent::Key(Key::Escape, _, _, _) = event {
 				println!("Close event received, closing window...");
@@ -195,17 +208,16 @@ fn main() {
 				view_matrix = new_matrices.0;
 				projection_matrix = new_matrices.1;
 			}
-			
-			println!("{:?}", event);
-
 		}
 		let now = Instant::now();
 		let time = now.duration_since(start).as_secs_f32();
 		let buffer = surface.back_buffer().expect("Failed to get back buffer");
 		let mut builder = surface.pipeline_builder();
 
-		let pipeline_state = PipelineState::new().set_clear_color([1.0; 4]).enable_clear_color(true).enable_clear_depth(true);
-		
+		let pipeline_state = PipelineState::new()
+			.set_clear_color([1.0; 4])
+			.enable_clear_color(true)
+			.enable_clear_depth(true);
 
 		builder.pipeline(&buffer, &pipeline_state, |pipeline, mut shading_gate|  {
 			shading_gate.shade(&shader, |p_interface, mut render_gate| {
@@ -218,62 +230,10 @@ fn main() {
 					for tess in object_tesses.iter() {
 						tess_gate.render(tess.slice(..));
 					}
-					// tess_gate.render(triangle.slice(..));
 				});
 			})
 		});
 		surface.swap_buffers();
-		println!("Took {} secs to render", Instant::now().duration_since(now).as_secs_f32());
+		println!("Rendering at {} fps", fps_counter.tick());
 	}
 }
-// fn main() {
-//     println!("Hello, world!");
-
-// 	let opengl_api_version = OpenGL::V3_2;
-// 	let mut window: PistonWindow = WindowSettings::new(
-//         "piston: draw_state",
-//         [1080, 720]
-//     )
-// 		.title("RustMarcher".to_owned())
-// 		.fullscreen(true)
-//         .exit_on_esc(true)
-// 		.graphics_api(opengl_api_version)
-// 		.resizable(true)
-// 		.vsync(true)
-//         .samples(4)
-//         .build()
-//         .unwrap();
-// 	window.set_lazy(true);
-	
-// 	let mut wsize = window.size();
-// 	let make_grid = |scale| Grid {
-// 		cols: (wsize.width / scale) as u32 + 1,
-// 		rows: (wsize.height / scale) as u32 + 1,
-// 		units: scale,
-// 	};
-// 	let mut grid = make_grid(10.0);
-	
-// 	let grid_lines = Line::new_round(hex("00ffff"), 2.0);
-// 	let grid_draw_state = DrawState::new_alpha();
-	
-// 	while let Some(event) = window.next() {
-// 		println!("Event {:?} dispatched", event);
-// 		window.draw_2d(&event, |context, graphics, _| {
-// 			clear([1.0; 4], graphics);
-// 			// rectangle(hex("ff0000"), // red
-//             //           [0.0, 0.0, 100.0, 100.0],
-//             //           context.transform,
-//             //           graphics);
-// 			// polygon(hex("ff0000"), &[[200., 200.], [300., 600.], [800., 800.]], context.transform, graphics);
-// 			grid.draw(&grid_lines, &grid_draw_state, context.transform, graphics);
-// 		});
-		
-// 		if let Some(button) = event.press_args() {
-// 			if button == Button::Keyboard(Key::Minus) {
-// 				grid = make_grid(grid.units + 1.);
-// 			} else if button == Button::Keyboard(Key::Equals) {
-// 				grid = make_grid((grid.units - 1.).clamp(0.1, f64::INFINITY))
-// 			}
-// 		}
-// 	}
-// }
