@@ -72,8 +72,15 @@ struct Vertex {
 
 const STEP: f32 = 0.5;
 fn main() {
+	let vertices_filename = match std::env::args().nth(1) {
+		Some(filename) => filename,
+		None => {
+			eprintln!("No input .obj file was provided");
+			std::process::exit(1);
+		},
+	};
 	let window_size = WindowDim::Windowed(1080, 720);
-	let window_opt = WindowOpt::default().set_cursor_mode(CursorMode::Visible).set_num_samples(None);
+	let window_opt = WindowOpt::default().set_cursor_mode(CursorMode::Visible).set_num_samples(Some(4));
 
 	let mut surface = GlfwSurface::new(window_size, WINDOW_NAME, window_opt).expect("Failed to create new window surface");
 
@@ -84,22 +91,7 @@ fn main() {
 	
 	let shader: Program<VertexSemantics, (), FragmentShaderUniform> = Program::from_stages(tess, &vertex, geometry, &fragment).unwrap().ignore_warnings();
 
-	// const VERTICES: [Vertex; 3] = [
-	// 	Vertex {
-	// 		position: VertexPosition::new([0., 0.5, -1.0]),
-	// 		color: VertexRGBA::new([1.0, 0.0, 0.0, 0.0]),
-	// 	},
-	// 	Vertex {
-	// 		position: VertexPosition::new([-0.5, -0.5, -1.]),
-	// 		color: VertexRGBA::new([0.0, 1.0, 0.0, 0.0]),
-	// 	},
-	// 	Vertex {
-	// 		position: VertexPosition::new([0.5, -0.5, -1.]),
-	// 		color: VertexRGBA::new([0.0, 0.0, 1.0, 0.0]),
-	// 	},
-	// ];
-
-	let vertices_file = fs::read_to_string("./ressources/m4a1.obj").expect("Failed to read vertices file");
+	let vertices_file = fs::read_to_string(vertices_filename).expect("Failed to read vertices file");
 	
 	let obj_set = obj::parse(vertices_file).or_else(|parse_error| {
 		println!("Failed to parse .obj file({}): {}", parse_error.line_number, parse_error.message);
@@ -151,8 +143,13 @@ fn main() {
 
 
 	
-	let object_vertices = object_to_vertices(&obj_set.objects[1]);
-	println!("Model has {} triangles", object_vertices.len());
+	let mut object_vertices = Vec::new();
+	for object in obj_set.objects.iter() {
+		let new_vertices = object_to_vertices(object);
+		println!("New model: {} has {} triangles", object.name, object_vertices.len());
+		object_vertices.extend(new_vertices);
+	}
+
 
 	let object_tesses = object_vertices.into_iter()
 		.map(|vertices|
@@ -161,9 +158,6 @@ fn main() {
 			 .set_mode(Mode::Triangle)
 			 .build().unwrap()
 		).collect::<Vec<luminance::tess::Tess>>();
-	
-	// let triangle = TessBuilder::new(&mut surface).add_vertices(VERTICES)
-	// 	.set_mode(Mode::Triangle).build().unwrap();
 
 	let mut eye_pos = Point3::new(0.0, 0.0, 1.0);
 	let dir = Vector3::new(0.0, 0.0, -1.0);

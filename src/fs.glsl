@@ -15,6 +15,7 @@ void main() {
   // diffusion factor (hence the k)
   float kd = dot(v_normal, -light_dir);
 
-  out_color = (obj_color * kd + v_normal) / 2.0;
-
+  out_color = (obj_color * kd // + v_normal
+  ) // / 2.0
+  ;
 }
