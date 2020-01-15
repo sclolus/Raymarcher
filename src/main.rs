@@ -40,7 +40,8 @@ use wavefront_obj::obj;
 use wavefront_obj::ParseError;
 use std::fs;
 
-mod cli;
+// mod cli;
+mod vertex;
 
 const WINDOW_NAME: &str = "Raymarcher";
 const VERTEX_SHADER_SOURCE: &str = include_str!("vs.glsl");
@@ -68,7 +69,7 @@ pub struct FragmentShaderUniform {
 
 #[derive(Vertex)]
 #[vertex(sem = "VertexSemantics")]
-struct Vertex {
+struct GlVertex {
 	position: VertexPosition,
 	#[vertex(normalized = "true")]
 	color: VertexRGBA,
@@ -133,7 +134,7 @@ fn main() {
 				};
 			}
 
-			Vertex {
+			GlVertex {
 				position: VertexPosition::new([vertex.x as f32, vertex.y as f32, vertex.z as f32]),
 				color: VertexRGBA::new([1.0, 0.0, 0.0, 0.0]),
 				normal: VertexNormal::new([normal.x as f32, normal.y as f32, normal.z as f32]),
@@ -151,7 +152,7 @@ fn main() {
 					},
 					_ => panic!("{:?} shape is not supported"),
 				}
-			}).collect::<Vec<[Vertex; 3]>>()
+			}).collect::<Vec<[GlVertex; 3]>>()
 	};
 
 	
