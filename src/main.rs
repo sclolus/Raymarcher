@@ -1,7 +1,5 @@
 #![feature(clamp)]
 
-extern crate piston;
-extern crate piston_window;
 extern crate luminance;
 extern crate luminance_glfw;
 #[macro_use]
@@ -13,35 +11,31 @@ extern crate fps_counter;
 #[macro_use]
 extern crate clap;
 
-use cgmath::prelude::*;
-use cgmath::{Matrix4, Point3, Vector3, PerspectiveFov};
-use piston_window::*;
-use piston_window::color::hex;
-use grid::Grid;
-use line::Line;
-use std::f64;
+#[macro_use]
+extern crate log;
+extern crate pretty_env_logger;
+
+use cgmath::{Point3, Vector3, Vector2, InnerSpace};
 use std::time::Instant;
-use std::process;
 use luminance_glfw::{Surface, GlfwSurface, WindowOpt, WindowDim, CursorMode, WindowEvent, Key};
 use luminance::{
 	linear::M44,
-	pipeline::{PipelineState, self},
+	pipeline::{PipelineState},
 	context::GraphicsContext,
 	shader::{
 		program::{Program, Uniform},
 		stage::{Type, Stage},
 	},
 	render_state::RenderState,
-	tess::{Mode, TessBuilder, TessSlice, TessSliceIndex},
-	vertex::{Vertex as VertexTrait, Semantics},
+	tess::{Mode, TessBuilder, TessSliceIndex},
 };
 
 use wavefront_obj::obj;
-use wavefront_obj::ParseError;
 use std::fs;
 
-// mod cli;
 mod vertex;
+
+mod camera;
 
 const WINDOW_NAME: &str = "Raymarcher";
 const VERTEX_SHADER_SOURCE: &str = include_str!("vs.glsl");
@@ -70,16 +64,19 @@ pub struct FragmentShaderUniform {
 #[derive(Vertex)]
 #[vertex(sem = "VertexSemantics")]
 struct GlVertex {
+	#[allow(unused)]
 	position: VertexPosition,
 	#[vertex(normalized = "true")]
+	#[allow(unused)]
 	color: VertexRGBA,
+	#[allow(unused)]
 	normal: VertexNormal,
 }
 
-const STEP: f32 = 0.5;
+const STEP: f32 = 1.25;
+const CAMERA_SENSIBILITY: f32 = 0.07;
 
 fn main() {
-	
 	let matches = clap_app! {
 		raymarcher =>
 			(version: "omega-0.1")
@@ -89,11 +86,11 @@ fn main() {
 			(after_help: "A simple raymarcher.")
 			(@arg object_files: -f --obj-file +required +takes_value ... "An wavefront .obj object file's name to render")
 	}.get_matches();
+	pretty_env_logger::init_timed();
 
 	let object_files = matches.values_of("object_files").expect("Should have object_files");
 	let window_size = WindowDim::Windowed(1080, 720);
-	let window_opt = WindowOpt::default().set_cursor_mode(CursorMode::Visible).set_num_samples(Some(4));
-
+	let window_opt = WindowOpt::default().set_cursor_mode(CursorMode::Disabled).set_num_samples(Some(4));
 	let mut surface = GlfwSurface::new(window_size, WINDOW_NAME, window_opt).expect("Failed to create new window surface");
 
 	let tess = None;
@@ -108,7 +105,7 @@ fn main() {
 		.collect::<Vec<String>>();
 	
 	let obj_sets = object_files.iter().map(|file| obj::parse(file).or_else(|parse_error| {
-		println!("Failed to parse .obj file({}): {}", parse_error.line_number, parse_error.message);
+		warn!("Failed to parse .obj file({}): {}", parse_error.line_number, parse_error.message);
 		Err(parse_error)
 	}).unwrap()).collect::<Vec<obj::ObjSet>>();
 
@@ -150,7 +147,10 @@ fn main() {
 						 wavefront_vertex_to_vertex(object, (v1, v0, v2)),
 						 wavefront_vertex_to_vertex(object, (v2, v1, v0))]
 					},
-					_ => panic!("{:?} shape is not supported"),
+					e => {
+						error!("{:?} shape is not supported", e);
+						panic!()
+					}
 				}
 			}).collect::<Vec<[GlVertex; 3]>>()
 	};
@@ -159,7 +159,7 @@ fn main() {
 	let mut object_vertices = Vec::new();
 	for object in obj_sets.iter().flat_map(|set| set.objects.iter()) {
 		let new_vertices = object_to_vertices(object);
-		println!("New model: {} has {} triangles", object.name, object_vertices.len());
+		info!("New model: {} has {} vertices", object.name, object.vertices.len());
 		object_vertices.extend(new_vertices);
 	}
 
@@ -171,45 +171,43 @@ fn main() {
 			 .build().unwrap()
 		).collect::<Vec<luminance::tess::Tess>>();
 
-	let mut eye_pos = Point3::new(0.0, 0.0, 1.0);
-	let dir = Vector3::new(0.0, 0.0, -1.0);
-	let up_dir = Vector3::new(0.0, 1.0, 0.0);
-	let aspect = surface.width() as f32 / surface.height() as f32;
-	let make_camera_matrices = |eye_pos, dir, up_dir, aspect| {
-		let eye_center = eye_pos + dir;
-		let view_matrix = Matrix4::look_at(eye_pos, eye_center, up_dir);
-		let projection_matrix = Matrix4::from(PerspectiveFov {
-			fovy: cgmath::Deg(90.).into(),
-			aspect,
-			near: 0.1,
-			far: 1000.,
-		}.to_perspective());
-		(view_matrix, projection_matrix)
-	};
-	let (mut view_matrix, mut projection_matrix) = make_camera_matrices(eye_pos, dir, up_dir, aspect);
+	let mut camera = camera::Camera::default();
+	camera.with_aspect(surface.width() as f32, surface.height() as f32);
+		// .with_position(Point3::new(5., 5., 5.))
+		// .with_dir(Vector3::new(-5., -5., -5.));
+	
 	let mut fps_counter = fps_counter::FPSCounter::new();
 	let start = Instant::now();
-	println!("Rendering start");
+	let mut old_cursor_pos = Vector2::new(surface.width() as f32 / 2., surface.height() as f32 / 2.);
+	
+	info!("Rendering start");
 	'app: loop {
-		
 		for event in surface.poll_events() {
 			if let WindowEvent::Close | WindowEvent::Key(Key::Escape, _, _, _) = event {
-				println!("Close event received, closing window...");
+				info!("Close event received, closing window...");
 				break 'app;
 			}
+
 			if let WindowEvent::Key(Key::Up, _, _, _) = event {
-				eye_pos += dir * STEP;
-				let new_matrices = make_camera_matrices(eye_pos, dir, up_dir, aspect);
-				view_matrix = new_matrices.0;
-				projection_matrix = new_matrices.1;
-			}
-			if let WindowEvent::Key(Key::Down, _, _, _) = event {
-				eye_pos -= dir * STEP;
-				let new_matrices = make_camera_matrices(eye_pos, dir, up_dir, aspect);
-				view_matrix = new_matrices.0;
-				projection_matrix = new_matrices.1;
+				camera.move_in_direction(camera::Direction::Forward, STEP);
+			} else if let WindowEvent::Key(Key::Left, _, _, _) = event {
+				camera.move_in_direction(camera::Direction::Left, STEP);
+			} else if let WindowEvent::Key(Key::Right, _, _, _) = event {
+				camera.move_in_direction(camera::Direction::Right, STEP);
+			} else if let WindowEvent::Key(Key::Down, _, _, _) = event {
+				camera.move_in_direction(camera::Direction::Backward, STEP);
+			} else if let WindowEvent::CursorPos(x, y) = event {
+				let pos = Vector2::new(x as f32, y as f32);
+				let delta_pos = (pos - old_cursor_pos).normalize() * CAMERA_SENSIBILITY;
+				let up = camera.up_vector();
+				let right = camera.right_vector();
+				
+				camera.rotate_dir(right, cgmath::Rad(delta_pos.y))
+					.rotate_dir(up, cgmath::Rad(-delta_pos.x));
+				old_cursor_pos = pos;
 			}
 		}
+		
 		let now = Instant::now();
 		let time = now.duration_since(start).as_secs_f32();
 		let buffer = surface.back_buffer().expect("Failed to get back buffer");
@@ -220,8 +218,10 @@ fn main() {
 			.enable_clear_color(true)
 			.enable_clear_depth(true);
 
-		builder.pipeline(&buffer, &pipeline_state, |pipeline, mut shading_gate|  {
+		builder.pipeline(&buffer, &pipeline_state, |_pipeline, mut shading_gate|  {
 			shading_gate.shade(&shader, |p_interface, mut render_gate| {
+				let view_matrix = camera.view_matrix();
+				let projection_matrix = camera.projection_matrix();
 				p_interface.time.update(time.into());
 				p_interface.view.update(view_matrix.into());
 				p_interface.projection.update(projection_matrix.into());
@@ -235,6 +235,6 @@ fn main() {
 			})
 		});
 		surface.swap_buffers();
-		println!("Rendering at {} fps", fps_counter.tick());
+		info!("Rendering at {} fps", fps_counter.tick());
 	}
 }

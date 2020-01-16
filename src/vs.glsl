@@ -36,6 +36,8 @@ void main() {
 	mat4 rot = rotationX(anglex) * rotationY(angley) * rotationZ(anglex);
 
 	v_color = color;
-	v_normal = (rot * vec4(normal, 1.0)).xzy;
-	gl_Position = projection * view * rot * vec4(position, 1.);
+	v_normal = (vec4(normal, 1.0)).xzy;
+	gl_Position = projection * view // * rot
+	
+	* vec4(position, 1.);
 }

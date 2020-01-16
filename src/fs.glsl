@@ -32,8 +32,8 @@ void main() {
   vec3 obj_color = vec3(.6, .6, .6);
 
   // light direction
-  mat4 light_rot = rotationX(cos(time)) * rotationY(sin(time));
-  vec3 light_dir = vec3((light_rot * vec4(0., -1., -.5, 1.0)).xyz);
+  // mat4 light_rot = rotationX(cos(time)) * rotationY(sin(time));
+  vec3 light_dir = vec3((vec4(0., -1., -.5, 1.0)).xyz);
 
   // diffusion factor (hence the k)
   float kd = dot(v_normal, -light_dir);
